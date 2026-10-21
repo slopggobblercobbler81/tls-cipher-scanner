@@ -7,6 +7,9 @@ import json
 from urllib.parse import urlparse
 
 DEPRECATED_PROTOCOLS = {
+    "SSLv2": "SSLv2 (Deprecated)",
+    "SSLv3": "SSLv3 (Deprecated)",
+    ssl.TLSVersion.SSLv3: "SSLv3 (Deprecated)",
     ssl.TLSVersion.TLSv1: "TLSv1.0 (Deprecated)",
     ssl.TLSVersion.TLSv1_1: "TLSv1.1 (Deprecated)",
 }
@@ -41,6 +44,8 @@ def scan_endpoint(host, port=443, timeout=5.0):
     }
 
     protocols_to_test = [
+        ("SSLv2", "SSLv2"),
+        ("SSLv3", "SSLv3"),
         (ssl.TLSVersion.TLSv1, "TLSv1.0"),
         (ssl.TLSVersion.TLSv1_1, "TLSv1.1"),
         (ssl.TLSVersion.TLSv1_2, "TLSv1.2"),
@@ -48,19 +53,23 @@ def scan_endpoint(host, port=443, timeout=5.0):
     ]
 
     for proto_version, proto_name in protocols_to_test:
-        context = ssl.create_default_context()
-        context.minimum_version = proto_version
-        context.maximum_version = proto_version
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-
         try:
+            context = ssl.create_default_context()
+            if isinstance(proto_version, ssl.TLSVersion):
+                context.minimum_version = proto_version
+                context.maximum_version = proto_version
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+
             with socket.create_connection((host, port), timeout=timeout) as sock:
                 with context.wrap_socket(sock, server_hostname=host) as ssock:
                     results["supported_protocols"][proto_name] = True
-                    if proto_version in DEPRECATED_PROTOCOLS:
-                        results["deprecated_protocols_found"].append(proto_name)
-                        results["vulnerabilities"].append(f"Supports deprecated protocol: {proto_name}")
+                    if proto_name in ["SSLv2", "SSLv3"] or proto_version in DEPRECATED_PROTOCOLS:
+                        if proto_name not in results["deprecated_protocols_found"]:
+                            results["deprecated_protocols_found"].append(proto_name)
+                        v_msg = f"Supports deprecated protocol: {proto_name}"
+                        if v_msg not in results["vulnerabilities"]:
+                            results["vulnerabilities"].append(v_msg)
         except Exception:
             results["supported_protocols"][proto_name] = False
 
