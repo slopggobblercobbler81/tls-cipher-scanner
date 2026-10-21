@@ -33,3 +33,4 @@ def test_scan_endpoint_success(mock_create_context, mock_create_connection):
     assert results["port"] == 443
     assert len(results["ciphers"]) == 1
     assert results["ciphers"][0]["name"] == "ECDHE-RSA-AES128-GCM-SHA256"
+    assert results["ciphers"][0]["is_tls13"] is False
