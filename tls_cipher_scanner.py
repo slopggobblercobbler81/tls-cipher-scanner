@@ -19,7 +19,39 @@ SECURE_PROTOCOLS = {
     ssl.TLSVersion.TLSv1_3: "TLSv1.3 (Secure)",
 }
 
+TLS_1_3_CIPHER_SUITES = {
+    "TLS_AES_128_GCM_SHA256",
+    "TLS_AES_256_GCM_SHA384",
+    "TLS_CHACHA20_POLY1305_SHA256",
+    "TLS_AES_128_CCM_SHA256",
+    "TLS_AES_128_CCM_8_SHA256",
+    "TLS_AES_256_GCM_SHA256",
+}
+
 INSECURE_CIPHER_TERMS = ["RC4", "DES", "RC2", "MD5", "NULL", "EXPORT", "anon"]
+
+def is_tls13_cipher(cipher_name):
+    if not cipher_name or not isinstance(cipher_name, str):
+        return False
+    upper = cipher_name.upper()
+    if upper in TLS_1_3_CIPHER_SUITES:
+        return True
+    if upper.startswith("TLS_AES_") or upper.startswith("TLS_CHACHA20_"):
+        return True
+    return False
+
+def is_tls13_cipher_suite(cipher_name):
+    return is_tls13_cipher(cipher_name)
+
+def check_tls13_cipher_suite(cipher_name):
+    is_tls13 = is_tls13_cipher(cipher_name)
+    issues = check_cipher_security(cipher_name)
+    return {
+        "cipher": cipher_name,
+        "is_tls13": is_tls13,
+        "secure": is_tls13 and len(issues) == 0,
+        "issues": issues,
+    }
 
 def check_cipher_security(cipher_name):
     upper_name = cipher_name.upper()
@@ -33,6 +65,41 @@ def check_cipher_security(cipher_name):
         issues.append("CBC mode cipher (potential padding oracle): CBC")
     return issues
 
+def format_json(results, indent=2, sort_keys=False):
+    return json.dumps(results, indent=indent, sort_keys=sort_keys, default=str)
+
+def format_json_output(results, indent=2, sort_keys=False):
+    return format_json(results, indent=indent, sort_keys=sort_keys)
+
+def format_text_output(results):
+    lines = [
+        "",
+        "--- Scan Results ---",
+        f"Target: {results['host']}:{results['port']}",
+        "",
+        "Supported Protocols:",
+    ]
+    for proto, supported in results.get("supported_protocols", {}).items():
+        status = "SUPPORTED" if supported else "Not supported"
+        lines.append(f"  - {proto}: {status}")
+
+    lines.append("")
+    lines.append("Active Cipher:")
+    if results.get("ciphers"):
+        for c in results["ciphers"]:
+            lines.append(f"  - Name: {c['name']} ({c['version']}, {c['bits']} bits)")
+    else:
+        lines.append("  - None retrieved")
+
+    lines.append("")
+    lines.append("Vulnerabilities / Flags:")
+    if results.get("vulnerabilities"):
+        for v in results["vulnerabilities"]:
+            lines.append(f"  [!] {v}")
+    else:
+        lines.append("  [+] No deprecated protocols or weak ciphers flagged.")
+    return "\n".join(lines)
+
 def scan_endpoint(host, port=443, timeout=5.0):
     results = {
         "host": host,
@@ -40,7 +107,8 @@ def scan_endpoint(host, port=443, timeout=5.0):
         "supported_protocols": {},
         "deprecated_protocols_found": [],
         "ciphers": [],
-        "vulnerabilities": []
+        "vulnerabilities": [],
+        "tls13_supported": False,
     }
 
     protocols_to_test = [
@@ -73,6 +141,8 @@ def scan_endpoint(host, port=443, timeout=5.0):
         except Exception:
             results["supported_protocols"][proto_name] = False
 
+    results["tls13_supported"] = results["supported_protocols"].get("TLSv1.3", False)
+
     try:
         context = ssl.create_default_context()
         context.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -87,7 +157,8 @@ def scan_endpoint(host, port=443, timeout=5.0):
                     results["ciphers"].append({
                         "name": cipher_name,
                         "version": cipher[1],
-                        "bits": cipher[2]
+                        "bits": cipher[2],
+                        "is_tls13": is_tls13_cipher(cipher_name) or cipher[1] == "TLSv1.3",
                     })
                     issues = check_cipher_security(cipher_name)
                     for issue in issues:
@@ -97,12 +168,12 @@ def scan_endpoint(host, port=443, timeout=5.0):
 
     return results
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Audit SSL/TLS cipher suites and protocol versions.")
     parser.add_argument("target", help="Domain name or URL to scan")
     parser.add_argument("-p", "--port", type=int, default=443, help="Port to scan (default: 443)")
     parser.add_argument("--json", action="store_true", help="Output results in JSON format")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     target = args.target
     if "://" in target:
@@ -117,32 +188,14 @@ def main():
         print(f"Error: Invalid target {target}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Scanning {host}:{port} for TLS protocols and ciphers...")
+    if not args.json:
+        print(f"Scanning {host}:{port} for TLS protocols and ciphers...")
     results = scan_endpoint(host, port)
 
     if args.json:
-        print(json.dumps(results, indent=2))
+        print(format_json(results))
     else:
-        print("\n--- Scan Results ---")
-        print(f"Target: {results['host']}:{results['port']}")
-        print("\nSupported Protocols:")
-        for proto, supported in results["supported_protocols"].items():
-            status = "SUPPORTED" if supported else "Not supported"
-            print(f"  - {proto}: {status}")
-
-        print("\nActive Cipher:")
-        if results["ciphers"]:
-            for c in results["ciphers"]:
-                print(f"  - Name: {c['name']} ({c['version']}, {c['bits']} bits)")
-        else:
-            print("  - None retrieved")
-
-        print("\nVulnerabilities / Flags:")
-        if results["vulnerabilities"]:
-            for v in results["vulnerabilities"]:
-                print(f"  [!] {v}")
-        else:
-            print("  [+] No deprecated protocols or weak ciphers flagged.")
+        print(format_text_output(results))
 
 if __name__ == "__main__":
     main()
