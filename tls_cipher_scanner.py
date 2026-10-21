@@ -28,7 +28,16 @@ TLS_1_3_CIPHER_SUITES = {
     "TLS_AES_256_GCM_SHA256",
 }
 
-INSECURE_CIPHER_TERMS = ["RC4", "DES", "RC2", "MD5", "NULL", "EXPORT", "anon"]
+INSECURE_CIPHER_TERMS = ["RC4", "DES", "RC2", "MD5", "NULL", "EXPORT", "anon", "IDEA", "SEED"]
+
+def has_forward_secrecy(cipher_name):
+    """Determine whether a cipher suite provides Perfect Forward Secrecy (PFS)."""
+    if not cipher_name or not isinstance(cipher_name, str):
+        return False
+    upper = cipher_name.upper()
+    if is_tls13_cipher(upper):
+        return True
+    return "ECDHE" in upper or "DHE" in upper or "EDH" in upper
 
 def is_tls13_cipher(cipher_name):
     if not cipher_name or not isinstance(cipher_name, str):
